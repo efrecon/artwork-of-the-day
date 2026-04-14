@@ -32,11 +32,11 @@ jobs:
 
       - name: Generate landscape
         run: |
-          ./aic.sh -vv -q ./queries/random-landscape.json > ./artwork-of-the-day/landscape.jpg
+          ./aic.sh -vv -q ./queries/random-landscape.json -- ./artwork-of-the-day/landscape.jpg
 
       - name: Generate oil painting
         run: |
-          ./aic.sh -vv -q ./queries/random-oil-painting.json > ./artwork-of-the-day/oil-painting.jpg
+          ./aic.sh -vv -q ./queries/random-oil-painting.json -- ./artwork-of-the-day/oil-painting.jpg
 
       - name: Upload Pages
         uses: actions/upload-pages-artifact@v4

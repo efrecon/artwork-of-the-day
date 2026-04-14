@@ -129,6 +129,7 @@ ARTWORK_TITLE=$(jq -r '.data[0].title' < "$_response")
 ARTWORK_DATE=$(jq -r '.data[0].date_display' < "$_response")
 ARTWORK_ARTIST=$(jq -r '.data[0].artist_display' < "$_response")
 ARTWORK_IMAGE_ID=$(jq -r '.data[0].image_id' < "$_response")
+rm -f "$_response"
 
 
 ARTWORK_URL="${AIC_IIIF}/${ARTWORK_IMAGE_ID}/full/${AIC_SIZE},/0/default.jpg"
@@ -137,19 +138,14 @@ OUTPUT="${1:-"-"}"
 # Download to a temp file when output is stdout, otherwise download to the requested file
 if [ "$OUTPUT" = "-" ]; then
   IMG_TMP="$(mktemp -u).jpg"
-  run_curl \
-    --header "AIC-User-Agent: $AIC_USER_AGENT" \
-    --output "$IMG_TMP" \
-    "$ARTWORK_URL"
   IMG_PATH="$IMG_TMP"
 else
-  run_curl \
-    --header "AIC-User-Agent: $AIC_USER_AGENT" \
-    --output "$OUTPUT" \
-    "$ARTWORK_URL"
   IMG_PATH="$OUTPUT"
 fi
-rm -f "$_response"
+run_curl \
+  --header "AIC-User-Agent: $AIC_USER_AGENT" \
+  --output "$IMG_PATH" \
+  "$ARTWORK_URL"
 info "Downloaded artwork: %s (%s) by %s (path: %s)" "$ARTWORK_TITLE" "$ARTWORK_DATE" "$ARTWORK_ARTIST" "$IMG_PATH"
 
 # Annotate image with title, date and artist using ImageMagick if available
