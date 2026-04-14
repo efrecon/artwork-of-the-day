@@ -86,18 +86,17 @@ warn() { _log WRN "$@"; }
 error() { _log ERR "$@" && exit 1; }
 
 
-# Silently download a file using curl
-# $1: URL
-# $2: output file (optional, default: basename of URL)
-download() {
-  run_curl -o "${2:-$(basename "$1")}" "$1"
-}
-
-
 # Wrapper around curl to add common options. No -f so that we can handle errors
 # $@: curl arguments
 run_curl() {
-  curl -sSL --retry 5 --retry-delay 3 --max-time 10 "$@"
+  curl \
+    --silent \
+    --show-error \
+    --location \
+    --retry 5 \
+    --retry-delay 3 \
+    --max-time 10 \
+      "$@"
 }
 
 
@@ -122,9 +121,7 @@ if [ "$STATUS" -ne 200 ]; then
   error "API request failed with status $STATUS"
 fi
 
-cat "$_response"
-
-ARTWORK_ID=$(jq -r '.data[0].id' < "$_response")
+# ARTWORK_ID=$(jq -r '.data[0].id' < "$_response")
 ARTWORK_TITLE=$(jq -r '.data[0].title' < "$_response")
 ARTWORK_DATE=$(jq -r '.data[0].date_display' < "$_response")
 ARTWORK_ARTIST=$(jq -r '.data[0].artist_display' < "$_response")
@@ -179,6 +176,7 @@ else
       rm -f "$ANNOT_TMP" || true
     else
       mv "$ANNOT_TMP" "$IMG_PATH"
+      info "Annotated image at %s with title, date and artist" "$IMG_PATH"
     fi
   fi
 fi
