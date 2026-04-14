@@ -150,7 +150,7 @@ else
   IMG_PATH="$OUTPUT"
 fi
 rm -f "$_response"
-info "Downloaded artwork: ${ARTWORK_TITLE} (${ARTWORK_DATE}) by ${ARTWORK_ARTIST} (ID: ${ARTWORK_ID})"
+info "Downloaded artwork: %s (%s) by %s (path: %s)" "$ARTWORK_TITLE" "$ARTWORK_DATE" "$ARTWORK_ARTIST" "$IMG_PATH"
 
 # Annotate image with title, date and artist using ImageMagick if available
 if [ "$AIC_ANNOTATE" = "0" ]; then
