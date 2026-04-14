@@ -1,0 +1,42 @@
+{
+    "resources": "artworks",
+    "fields": [
+        "id",
+        "title",
+        "artist_display",
+        "date_display",
+        "image_id"
+    ],
+    "boost": false,
+    "limit": 1,
+    "query": {
+        "function_score": {
+            "query": {
+                "bool": {
+                    "filter": [
+                        {
+                            "term": {
+                                "material_ids": "TM-2451"
+                            }
+                        },
+                        {
+                            "term": {
+                                "is_public_domain": true
+                            }
+                        },
+                        {
+                            "exists": {
+                                "field": "image_id"
+                            }
+                        }
+                    ]
+                }
+            },
+            "boost_mode": "replace",
+            "random_score": {
+                "field": "id",
+                "seed": "%SEED%"
+            }
+        }
+    }
+}

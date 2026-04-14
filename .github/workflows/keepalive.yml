@@ -1,0 +1,19 @@
+# Keep-Alive all GitHub Workflows so they don't stop working after 60 days of
+# inactivity.
+name: keepalive
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run every sunday at 1:27 UTC
+    - cron: '27 1 * * SUN'
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: keepalive
+        uses: efrecon/gh-action-keepalive@main
