@@ -14,7 +14,7 @@ if set -o | grep -q 'pipefail'; then set -o pipefail; fi
 
 # Random seed for the random queries, can be set to a fixed value for
 # reproducibility
-: "${AIC_SEED:="$(awk 'BEGIN {srand(); print srand()}')"}"
+: "${AIC_SEED:="$(awk 'BEGIN {srand(); print int(rand()*32768)}')"}"
 
 # Output image size
 : "${AIC_SIZE:="843"}"
