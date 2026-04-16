@@ -16,12 +16,8 @@ if set -o | grep -q 'pipefail'; then set -o pipefail; fi
 # Set to empty to loop until an image oriented as AIC_ORIENTATION is found.
 : "${AIC_SEED=""}"
 
-# Orientation of target image when AIC_SEED is empty, can be "landscape",
-# "portrait" or "square"
-: "${AIC_ORIENTATION:="landscape"}"
-
-# Output image size
-: "${AIC_SIZE:="843"}"
+# Target resolution for the image.
+: "${AIC_RESOLUTION:="1920x1080"}"
 
 # Query to perform
 : "${AIC_QUERY:="$AIC_ROOTDIR/queries/random-oil-painting.json"}"
@@ -31,6 +27,10 @@ if set -o | grep -q 'pipefail'; then set -o pipefail; fi
 
 # Annotate the image with title, date and artist using ImageMagick if available, can be disabled with -b option
 : "${AIC_ANNOTATE:="1"}"
+
+# Background color for centering canvas. When non-empty, the downloaded image
+# will be centered on a canvas of this color at the exact AIC_RESOLUTION.
+: "${AIC_BACKGROUND:=""}"
 
 # Verbosity level, can be increased with -v option
 : "${AIC_VERBOSE:=0}"
@@ -48,12 +48,14 @@ usage() {
 }
 
 # Parse named arguments using getopts
-while getopts ":bs:S:o:q:vh-" opt; do
+while getopts ":B:br:s:S:r:q:vh-" opt; do
   case "$opt" in
+    B) # Background color for centering canvas. When set, the image is centered on a canvas of this color at the requested resolution
+      AIC_BACKGROUND=$OPTARG;;
     b) # Do not annotate the image with title, date and artist using ImageMagick if available
       AIC_ANNOTATE="0";;
-    o) # Orientation of target image when seed is empty, can be "landscape", "portrait" or "square"
-      AIC_ORIENTATION=$OPTARG;;
+    r) # Resolution of the target image, this will drive the orientation to loop through when the seed is not set. Default is 1920x1080
+      AIC_RESOLUTION=$OPTARG;;
     q) # Query to perform, default is queries/random-oil-painting.json
       AIC_QUERY=$OPTARG;;
     S) # Seed for the random queries, empty to loop until a properly oriented image is found
@@ -137,7 +139,23 @@ aic_query() {
 # Verify required commands are available
 silent command -v jq || error "jq command not found"
 
-# When AIC_SEED is empty, loop until we find a landscape image
+
+
+# When AIC_ORIENTATION is empty, derive it from AIC_RESOLUTION (WIDTHxHEIGHT)
+if [ -n "$AIC_RESOLUTION" ]; then
+  AIC_RESOLUTION_W=$(printf '%s' "${AIC_RESOLUTION%%x*}" | tr -d '[:space:]')
+  AIC_RESOLUTION_H=$(printf '%s' "${AIC_RESOLUTION##*x}" | tr -d '[:space:]')
+  if [ "$AIC_RESOLUTION_W" -gt "$AIC_RESOLUTION_H" ] 2>/dev/null; then
+    AIC_ORIENTATION="landscape"
+  elif [ "$AIC_RESOLUTION_H" -gt "$AIC_RESOLUTION_W" ] 2>/dev/null; then
+    AIC_ORIENTATION="portrait"
+  else
+    AIC_ORIENTATION="square"
+  fi
+  trace "Derived orientation '%s' from resolution %s" "$AIC_ORIENTATION" "$AIC_RESOLUTION"
+fi
+
+# When AIC_SEED is empty, loop until we find a properly oriented image
 if [ -z "$AIC_SEED" ]; then
   while true; do
     # Generate a new random seed on each iteration when looping for landscape
@@ -154,15 +172,15 @@ if [ -z "$AIC_SEED" ]; then
     _height=$(printf '%s' "$_iiif_info" | jq -r '.height')
     if [ "$AIC_ORIENTATION" = "landscape" ] && [ "$_width" -ge "$_height" ]; then
       trace "Found landscape image: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
+      AIC_SIZE="${AIC_RESOLUTION_W},"
       break
     elif [ "$AIC_ORIENTATION" = "portrait" ] && [ "$_height" -ge "$_width" ]; then
       trace "Found portrait image: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
+      AIC_SIZE=",${AIC_RESOLUTION_H}"
       break
     elif [ "$AIC_ORIENTATION" = "square" ] && [ "$_width" -eq "$_height" ]; then
       trace "Found square image: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
-      break
-    elif [ "$AIC_ORIENTATION" = "any" ] || [ "$AIC_ORIENTATION" = "" ]; then
-      trace "Found image with any orientation: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
+      AIC_SIZE="${AIC_RESOLUTION_W},"
       break
     else
       info "Skipping %s: not %s (%sx%s)" "$ARTWORK_TITLE" "$AIC_ORIENTATION" "$_width" "$_height"
@@ -174,7 +192,7 @@ else
 fi
 
 
-ARTWORK_URL="${AIC_IIIF}/${ARTWORK_IMAGE_ID}/full/${AIC_SIZE},/0/default.jpg"
+ARTWORK_URL="${AIC_IIIF}/${ARTWORK_IMAGE_ID}/full/${AIC_SIZE}/0/default.jpg"
 OUTPUT="${1:-"-"}"
 
 # Download to a temp file when output is stdout, otherwise download to the requested file
@@ -189,6 +207,35 @@ run_curl \
   --output "$IMG_PATH" \
   "$ARTWORK_URL"
 info "Downloaded artwork: %s (%s) by %s (path: %s)" "$ARTWORK_TITLE" "$ARTWORK_DATE" "$ARTWORK_ARTIST" "$IMG_PATH"
+
+# Center the image on a colored canvas at the exact target resolution
+if [ -n "$AIC_BACKGROUND" ] && [ -n "$AIC_RESOLUTION" ]; then
+  trace "Centering image on %s %s canvas" "$AIC_RESOLUTION" "$AIC_BACKGROUND"
+  if silent command -v magick; then
+    _IM_CMD="magick"
+  elif silent command -v convert; then
+    _IM_CMD="convert"
+  else
+    warn "ImageMagick not found; skipping centering"
+    _IM_CMD=""
+  fi
+
+  if [ -n "$_IM_CMD" ]; then
+    _CENTER_TMP="$(mktemp -u).jpg"
+    if ! "$_IM_CMD" \
+          -size "${AIC_RESOLUTION_W}x${AIC_RESOLUTION_H}" "xc:${AIC_BACKGROUND}" \
+          "$IMG_PATH" \
+          -gravity center \
+          -composite \
+          "$_CENTER_TMP"; then
+      warn "ImageMagick centering failed; leaving original image"
+      rm -f "$_CENTER_TMP" || true
+    else
+      mv "$_CENTER_TMP" "$IMG_PATH"
+      info "Centered image on %sx%s white canvas" "$AIC_RESOLUTION_W" "$AIC_RESOLUTION_H"
+    fi
+  fi
+fi
 
 # Annotate image with title, date and artist using ImageMagick if available
 if [ "$AIC_ANNOTATE" = "0" ]; then

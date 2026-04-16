@@ -15,7 +15,8 @@ permissions:
 
 
 env:
-  AIC_ORIENTATION: "landscape"
+  AIC_RESOLUTION: "1920x1080"
+  AIC_BACKGROUND: "#ffffff"
 
 jobs:
   generate:
