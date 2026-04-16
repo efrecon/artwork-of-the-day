@@ -12,9 +12,13 @@ if set -o | grep -q 'pipefail'; then set -o pipefail; fi
 : "${AIC_API:="https://api.artic.edu/api/v1"}"
 : "${AIC_IIIF:="https://www.artic.edu/iiif/2"}"
 
-# Random seed for the random queries, can be set to a fixed value for
-# reproducibility
-: "${AIC_SEED:="$(awk 'BEGIN {srand(); print int(rand()*32768)}')"}"
+# Seed for the random queries, can be set to a fixed value for reproducibility.
+# Set to empty to loop until an image oriented as AIC_ORIENTATION is found.
+: "${AIC_SEED=""}"
+
+# Orientation of target image when AIC_SEED is empty, can be "landscape",
+# "portrait" or "square"
+: "${AIC_ORIENTATION:="landscape"}"
 
 # Output image size
 : "${AIC_SIZE:="843"}"
@@ -44,13 +48,15 @@ usage() {
 }
 
 # Parse named arguments using getopts
-while getopts ":bs:S:q:vh-" opt; do
+while getopts ":bs:S:o:q:vh-" opt; do
   case "$opt" in
     b) # Do not annotate the image with title, date and artist using ImageMagick if available
       AIC_ANNOTATE="0";;
+    o) # Orientation of target image when seed is empty, can be "landscape", "portrait" or "square"
+      AIC_ORIENTATION=$OPTARG;;
     q) # Query to perform, default is queries/random-oil-painting.json
       AIC_QUERY=$OPTARG;;
-    S) # Random seed for the random queries, can be set to a fixed value for reproducibility
+    S) # Seed for the random queries, empty to loop until a properly oriented image is found
       AIC_SEED=$OPTARG;;
     s) # Output image size, default is 843 (the size of the largest image available for all artworks)
       AIC_SIZE=$OPTARG;;
@@ -104,29 +110,65 @@ run_curl() {
 silent() { "$@" >/dev/null 2>&1 </dev/null; }
 
 
+aic_query() {
+  _qry=$(sed "s/%SEED%/${AIC_SEED}/g" < "$AIC_QUERY")
+  _response=$(mktemp)
+
+  STATUS=$(run_curl \
+              --header "Content-Type: application/json; charset=UTF-8" \
+              --header "AIC-User-Agent: $AIC_USER_AGENT" \
+              --data "$_qry" \
+              --write-out '%{http_code}' \
+              "${AIC_API}/search" \
+              --output "$_response")
+  if [ "$STATUS" -ne 200 ]; then
+    error "API request failed with status $STATUS"
+  fi
+
+  # ARTWORK_ID=$(jq -r '.data[0].id' < "$_response")
+  ARTWORK_TITLE=$(jq -r '.data[0].title' < "$_response")
+  ARTWORK_DATE=$(jq -r '.data[0].date_display' < "$_response")
+  ARTWORK_ARTIST=$(jq -r '.data[0].artist_display' < "$_response")
+  ARTWORK_IMAGE_ID=$(jq -r '.data[0].image_id' < "$_response")
+  rm -f "$_response"
+}
+
 
 # Verify required commands are available
 silent command -v jq || error "jq command not found"
-_qry=$(sed "s/%SEED%/${AIC_SEED}/g" < "$AIC_ROOTDIR/queries/random-oil-painting.json")
-_response=$(mktemp)
 
-STATUS=$(run_curl \
-            --header "Content-Type: application/json; charset=UTF-8" \
-            --header "AIC-User-Agent: $AIC_USER_AGENT" \
-            --data "$_qry" \
-            --write-out '%{http_code}' \
-            "${AIC_API}/search" \
-            --output "$_response")
-if [ "$STATUS" -ne 200 ]; then
-  error "API request failed with status $STATUS"
+# When AIC_SEED is empty, loop until we find a landscape image
+if [ -z "$AIC_SEED" ]; then
+  while true; do
+    # Generate a new random seed on each iteration when looping for landscape
+    AIC_SEED=$(awk 'BEGIN {srand(); print int(rand()*32768)}')
+    trace "Trying with seed %s" "$AIC_SEED"
+
+    aic_query
+
+    # When looping for landscape, check orientation via IIIF before downloading
+    _iiif_info=$(run_curl \
+                    --header "AIC-User-Agent: $AIC_USER_AGENT" \
+                    "${AIC_IIIF}/${ARTWORK_IMAGE_ID}/info.json")
+    _width=$(printf '%s' "$_iiif_info" | jq -r '.width')
+    _height=$(printf '%s' "$_iiif_info" | jq -r '.height')
+    if [ "$AIC_ORIENTATION" = "landscape" ] && [ "$_width" -ge "$_height" ]; then
+      trace "Found landscape image: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
+      break
+    elif [ "$AIC_ORIENTATION" = "portrait" ] && [ "$_height" -ge "$_width" ]; then
+      trace "Found portrait image: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
+      break
+    elif [ "$AIC_ORIENTATION" = "square" ] && [ "$_width" -eq "$_height" ]; then
+      trace "Found square image: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
+      break
+    else
+      info "Skipping %s: not %s (%sx%s)" "$ARTWORK_TITLE" "$AIC_ORIENTATION" "$_width" "$_height"
+      continue
+    fi
+  done
+else
+  aic_query
 fi
-
-# ARTWORK_ID=$(jq -r '.data[0].id' < "$_response")
-ARTWORK_TITLE=$(jq -r '.data[0].title' < "$_response")
-ARTWORK_DATE=$(jq -r '.data[0].date_display' < "$_response")
-ARTWORK_ARTIST=$(jq -r '.data[0].artist_display' < "$_response")
-ARTWORK_IMAGE_ID=$(jq -r '.data[0].image_id' < "$_response")
-rm -f "$_response"
 
 
 ARTWORK_URL="${AIC_IIIF}/${ARTWORK_IMAGE_ID}/full/${AIC_SIZE},/0/default.jpg"
