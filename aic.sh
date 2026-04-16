@@ -161,6 +161,9 @@ if [ -z "$AIC_SEED" ]; then
     elif [ "$AIC_ORIENTATION" = "square" ] && [ "$_width" -eq "$_height" ]; then
       trace "Found square image: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
       break
+    elif [ "$AIC_ORIENTATION" = "any" ] || [ "$AIC_ORIENTATION" = "" ]; then
+      trace "Found image with any orientation: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
+      break
     else
       info "Skipping %s: not %s (%sx%s)" "$ARTWORK_TITLE" "$AIC_ORIENTATION" "$_width" "$_height"
       continue
