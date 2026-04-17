@@ -32,6 +32,9 @@ if set -o | grep -q 'pipefail'; then set -o pipefail; fi
 # will be centered on a canvas of this color at the exact AIC_RESOLUTION.
 : "${AIC_BACKGROUND:=""}"
 
+# How to run image magick convert, empty to auto-detect, "-" to disable.
+: "${AIC_MAGICK:=""}"
+
 # Verbosity level, can be increased with -v option
 : "${AIC_VERBOSE:=0}"
 
@@ -110,6 +113,35 @@ run_curl() {
 
 # Silence the command passed as an argument.
 silent() { "$@" >/dev/null 2>&1 </dev/null; }
+
+
+# Run an ImageMagick convert command on IMG_PATH, writing the result to a temp
+# file and replacing IMG_PATH on success. All arguments are passed as ImageMagick
+# options/arguments. Returns 1 when ImageMagick is not available.
+# Usage: magick_convert [imagemagick args...]
+magick_convert() {
+  if [ -z "${AIC_MAGICK:-}" ]; then
+    if silent command -v magick; then
+      AIC_MAGICK="magick"
+    elif silent command -v convert; then
+      AIC_MAGICK="convert"
+    else
+      AIC_MAGICK="-"
+    fi
+  fi
+
+  if [ "$AIC_MAGICK" = "-" ]; then
+    return 1
+  fi
+
+  _mc_tmp="$(mktemp -u).jpg"
+  trace "Running IM: %s %s %s" "$AIC_MAGICK" "$*" "$_mc_tmp"
+  if ! "$AIC_MAGICK" "$@" "$_mc_tmp"; then
+    rm -f "$_mc_tmp" || true
+    return 1
+  fi
+  mv "$_mc_tmp" "$IMG_PATH"
+}
 
 
 aic_query() {
@@ -211,29 +243,14 @@ info "Downloaded artwork: %s (%s) by %s (path: %s)" "$ARTWORK_TITLE" "$ARTWORK_D
 # Center the image on a colored canvas at the exact target resolution
 if [ -n "$AIC_BACKGROUND" ] && [ -n "$AIC_RESOLUTION" ]; then
   trace "Centering image on %s %s canvas" "$AIC_RESOLUTION" "$AIC_BACKGROUND"
-  if silent command -v magick; then
-    _IM_CMD="magick"
-  elif silent command -v convert; then
-    _IM_CMD="convert"
+  if magick_convert \
+        -size "${AIC_RESOLUTION_W}x${AIC_RESOLUTION_H}" "xc:${AIC_BACKGROUND}" \
+        "$IMG_PATH" \
+        -gravity center \
+        -composite; then
+    info "Centered image on %sx%s %s canvas" "$AIC_RESOLUTION_W" "$AIC_RESOLUTION_H" "$AIC_BACKGROUND"
   else
-    warn "ImageMagick not found; skipping centering"
-    _IM_CMD=""
-  fi
-
-  if [ -n "$_IM_CMD" ]; then
-    _CENTER_TMP="$(mktemp -u).jpg"
-    if ! "$_IM_CMD" \
-          -size "${AIC_RESOLUTION_W}x${AIC_RESOLUTION_H}" "xc:${AIC_BACKGROUND}" \
-          "$IMG_PATH" \
-          -gravity center \
-          -composite \
-          "$_CENTER_TMP"; then
-      warn "ImageMagick centering failed; leaving original image"
-      rm -f "$_CENTER_TMP" || true
-    else
-      mv "$_CENTER_TMP" "$IMG_PATH"
-      info "Centered image on %sx%s white canvas" "$AIC_RESOLUTION_W" "$AIC_RESOLUTION_H"
-    fi
+    warn "ImageMagick not found or centering failed; leaving original image"
   fi
 fi
 
@@ -242,34 +259,18 @@ if [ "$AIC_ANNOTATE" = "0" ]; then
   info "Annotation disabled, skipping"
 else
   trace "Annotating image with title, date and artist using ImageMagick if available"
-  if silent command -v magick; then
-    IM_CMD="magick"
-  elif silent command -v convert; then
-    IM_CMD="convert"
+  TEXT="$(printf '%s (%s) - %s' "$ARTWORK_TITLE" "$ARTWORK_DATE" "$ARTWORK_ARTIST")"
+  # Draw white text with a thin black stroke for readability in the lower-left corner
+  if magick_convert "$IMG_PATH" \
+        -gravity SouthWest \
+        -fill white \
+        -stroke '#000000' \
+        -strokewidth 2 \
+        -pointsize 24 \
+        -annotate +10+10 "$TEXT"; then
+    info "Annotated image at %s with title, date and artist" "$IMG_PATH"
   else
-    warn "ImageMagick not found; skipping annotation"
-    IM_CMD=""
-  fi
-
-  if [ -n "$IM_CMD" ]; then
-    TEXT="$(printf '%s (%s) - %s' "$ARTWORK_TITLE" "$ARTWORK_DATE" "$ARTWORK_ARTIST")"
-    ANNOT_TMP="$(mktemp -u).jpg"
-
-    # Draw white text with a thin black stroke for readability in the lower-left corner
-    if ! "$IM_CMD" "$IMG_PATH" \
-          -gravity SouthWest \
-          -fill white \
-          -stroke '#000000' \
-          -strokewidth 2 \
-          -pointsize 24 \
-          -annotate +10+10 "$TEXT" \
-          "$ANNOT_TMP"; then
-      warn "ImageMagick annotation failed; leaving original image"
-      rm -f "$ANNOT_TMP" || true
-    else
-      mv "$ANNOT_TMP" "$IMG_PATH"
-      info "Annotated image at %s with title, date and artist" "$IMG_PATH"
-    fi
+    warn "ImageMagick not found or annotation failed; leaving original image"
   fi
 fi
 
