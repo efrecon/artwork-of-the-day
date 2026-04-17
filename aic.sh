@@ -51,7 +51,7 @@ usage() {
 }
 
 # Parse named arguments using getopts
-while getopts ":B:br:s:S:r:q:vh-" opt; do
+while getopts ":B:br:s:r:q:vh-" opt; do
   case "$opt" in
     B) # Background color for centering canvas. When set, the image is centered on a canvas of this color at the requested resolution
       AIC_BACKGROUND=$OPTARG;;
@@ -61,10 +61,8 @@ while getopts ":B:br:s:S:r:q:vh-" opt; do
       AIC_RESOLUTION=$OPTARG;;
     q) # Query to perform, default is queries/random-oil-painting.json
       AIC_QUERY=$OPTARG;;
-    S) # Seed for the random queries, empty to loop until a properly oriented image is found
+    s) # Seed for the random queries, empty to loop until a properly oriented image is found
       AIC_SEED=$OPTARG;;
-    s) # Output image size, default is 843 (the size of the largest image available for all artworks)
-      AIC_SIZE=$OPTARG;;
     v) # Increase verbosity each time repeated
       AIC_VERBOSE=$(( AIC_VERBOSE + 1 ));;
     h) # Show this help
