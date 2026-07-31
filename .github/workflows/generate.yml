@@ -44,7 +44,7 @@ jobs:
           ./aic.sh -vv -q ./queries/random-oil-painting.json -- ./artwork-of-the-day/oil-painting.jpg
 
       - name: Upload Pages
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: ./artwork-of-the-day
 
