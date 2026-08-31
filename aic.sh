@@ -194,6 +194,12 @@ if [ -z "$AIC_SEED" ]; then
 
     aic_query
 
+    # Skip artworks with no image
+    if [ -z "$ARTWORK_IMAGE_ID" ] || [ "$ARTWORK_IMAGE_ID" = "null" ]; then
+      info "Skipping %s: no image available" "$ARTWORK_TITLE"
+      continue
+    fi
+
     # When looping for landscape, check orientation via IIIF before downloading
     _iiif_info=$(run_curl \
                     --header "AIC-User-Agent: $AIC_USER_AGENT" \
