@@ -38,6 +38,12 @@ if set -o | grep -q 'pipefail'; then set -o pipefail; fi
 # Verbosity level, can be increased with -v option
 : "${AIC_VERBOSE:=0}"
 
+# Maximum number of retries when looping for orientation, 0 or lower to retry indefinitely
+: "${AIC_RETRY_MAX:=20}"
+
+# Maximum backoff in seconds between retries when looping
+: "${AIC_RETRY_BACKOFF:=15}"
+
 usage() {
   # This uses the comments behind the options to show the help. Not extremely
   # correct, but effective and simple.
@@ -51,12 +57,14 @@ usage() {
 }
 
 # Parse named arguments using getopts
-while getopts ":B:br:s:r:q:vh-" opt; do
+while getopts ":B:bn:q:r:s:vh-" opt; do
   case "$opt" in
     B) # Background color for centering canvas. When set, the image is centered on a canvas of this color at the requested resolution
       AIC_BACKGROUND=$OPTARG;;
     b) # Do not annotate the image with title, date and artist using ImageMagick if available
       AIC_ANNOTATE="0";;
+    n) # Maximum number of retries when looping for orientation, 0 or lower to retry indefinitely. Default is 20
+      AIC_RETRY_MAX=$OPTARG;;
     r) # Resolution of the target image, this will drive the orientation to loop through when the seed is not set. Default is 1920x1080
       AIC_RESOLUTION=$OPTARG;;
     q) # Query to perform, default is queries/random-oil-painting.json
@@ -166,6 +174,21 @@ aic_query() {
 }
 
 
+# Increment retry counter, sleep with exponential backoff, exit if max retries exceeded.
+_do_retry() {
+  _retries=$(( _retries + 1 ))
+  if [ "$AIC_RETRY_MAX" -gt 0 ] 2>/dev/null && [ "$_retries" -ge "$AIC_RETRY_MAX" ]; then
+    error "Maximum retries (%s) reached without finding a %s image" "$AIC_RETRY_MAX" "$AIC_ORIENTATION"
+  fi
+  trace "Waiting %ss before retry %s" "$_wait" "$_retries"
+  sleep "$_wait"
+  _wait=$(( _wait * 2 ))
+  if [ "$_wait" -gt "$AIC_RETRY_BACKOFF" ]; then
+    _wait="$AIC_RETRY_BACKOFF"
+  fi
+}
+
+
 # Verify required commands are available
 silent command -v jq || error "jq command not found"
 
@@ -187,6 +210,8 @@ fi
 
 # When AIC_SEED is empty, loop until we find a properly oriented image
 if [ -z "$AIC_SEED" ]; then
+  _retries=0
+  _wait=1
   while true; do
     # Generate a new random seed on each iteration when looping for landscape
     AIC_SEED=$(awk 'BEGIN {srand(); print int(rand()*32768)}')
@@ -197,6 +222,7 @@ if [ -z "$AIC_SEED" ]; then
     # Skip artworks with no image
     if [ -z "$ARTWORK_IMAGE_ID" ] || [ "$ARTWORK_IMAGE_ID" = "null" ]; then
       info "Skipping %s: no image available" "$ARTWORK_TITLE"
+      _do_retry
       continue
     fi
 
@@ -204,6 +230,11 @@ if [ -z "$AIC_SEED" ]; then
     _iiif_info=$(run_curl \
                     --header "AIC-User-Agent: $AIC_USER_AGENT" \
                     "${AIC_IIIF}/${ARTWORK_IMAGE_ID}/info.json")
+    if ! printf '%s' "$_iiif_info" | jq -e . >/dev/null 2>&1; then
+      warn "Failed to parse IIIF info.json for image %s" "$ARTWORK_IMAGE_ID"
+      _do_retry
+      continue
+    fi
     _width=$(printf '%s' "$_iiif_info" | jq -r '.width')
     _height=$(printf '%s' "$_iiif_info" | jq -r '.height')
     if [ "$AIC_ORIENTATION" = "landscape" ] && [ "$_width" -ge "$_height" ]; then
@@ -220,11 +251,30 @@ if [ -z "$AIC_SEED" ]; then
       break
     else
       info "Skipping %s: not %s (%sx%s)" "$ARTWORK_TITLE" "$AIC_ORIENTATION" "$_width" "$_height"
+      _do_retry
       continue
     fi
   done
 else
   aic_query
+
+  # Compute the size
+  _iiif_info=$(run_curl \
+                  --header "AIC-User-Agent: $AIC_USER_AGENT" \
+                  "${AIC_IIIF}/${ARTWORK_IMAGE_ID}/info.json")
+  printf '%s' "$_iiif_info" | jq -e . >/dev/null || error "Failed to parse IIIF info.json for image %s" "$ARTWORK_IMAGE_ID"
+  _width=$(printf '%s' "$_iiif_info" | jq -r '.width')
+  _height=$(printf '%s' "$_iiif_info" | jq -r '.height')
+  if [ "$_width" -ge "$_height" ]; then
+    trace "Found landscape image: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
+    AIC_SIZE="${AIC_RESOLUTION_W},"
+  elif [ "$_height" -ge "$_width" ]; then
+    trace "Found portrait image: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
+    AIC_SIZE=",${AIC_RESOLUTION_H}"
+  elif [ "$_width" -eq "$_height" ]; then
+    trace "Found square image: %s (%sx%s)" "$ARTWORK_TITLE" "$_width" "$_height"
+    AIC_SIZE="${AIC_RESOLUTION_W},"
+  fi
 fi
 
 
